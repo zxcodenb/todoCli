@@ -55,20 +55,13 @@ type model struct {
 var (
 	appStyle = lipgloss.NewStyle().
 			Padding(1, 2)
-	headerRowStyle = lipgloss.NewStyle().
-			PaddingBottom(1)
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color("#FFF8E7")).
 			Background(lipgloss.Color("#D94841")).
 			Padding(0, 1)
-	subtitleStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#6B7280"))
 	metaStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#5F5F5F"))
-	helpStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#6B7280")).
-			PaddingTop(1)
 	statusStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#12664F")).
 			Bold(true)
@@ -84,19 +77,6 @@ var (
 	idleBadgeStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#4B5563")).
 			Padding(0, 1)
-	statChipStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#1F2937")).
-			Background(lipgloss.Color("#E5E7EB")).
-			Padding(0, 1)
-	searchChipStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#F8FAFC")).
-			Background(lipgloss.Color("#0F766E")).
-			Padding(0, 1)
-	taskMetaStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#94A3B8"))
-	emptyStateStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#9CA3AF")).
-			Italic(true)
 )
 
 func initialModel(todoStore *store.Store, dbPath string) model {
@@ -290,9 +270,22 @@ func (m model) updateSearchMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m model) View() string {
 	title := titleStyle.Render("Todo CLI")
-	subtitle := subtitleStyle.Render(fmt.Sprintf("SQLite: %s", m.dbPath))
-	summary := m.renderSummary()
-	help := helpStyle.Render("h/l switch quadrant  j/k move  1-4 move task  a add  / search  enter toggle  d delete  esc clear search  q quit")
+	subtitle := metaStyle.Render(fmt.Sprintf("SQLite: %s", m.dbPath))
+
+	summary := lipgloss.JoinHorizontal(
+		lipgloss.Left,
+		metaStyle.Render(fmt.Sprintf("All %d", m.stats.All)),
+		"   ",
+		metaStyle.Render(fmt.Sprintf("Q1 %d", m.stats.QuadrantOne)),
+		"   ",
+		metaStyle.Render(fmt.Sprintf("Q2 %d", m.stats.QuadrantTwo)),
+		"   ",
+		metaStyle.Render(fmt.Sprintf("Q3 %d", m.stats.QuadrantThree)),
+		"   ",
+		metaStyle.Render(fmt.Sprintf("Q4 %d", m.stats.QuadrantFour)),
+	)
+
+	help := metaStyle.Render("h/l switch quadrant  j/k move  1-4 move task  a add  / search  enter toggle  d delete  esc clear search  q quit")
 
 	var footer string
 	switch m.mode {
@@ -314,7 +307,7 @@ func (m model) View() string {
 
 	view := lipgloss.JoinVertical(
 		lipgloss.Left,
-		headerRowStyle.Render(lipgloss.JoinHorizontal(lipgloss.Left, title, "  ", subtitle)),
+		lipgloss.JoinHorizontal(lipgloss.Left, title, "  ", subtitle),
 		summary,
 		m.renderBoard(),
 		footer,
@@ -322,22 +315,6 @@ func (m model) View() string {
 	)
 
 	return appStyle.Render(view)
-}
-
-func (m model) renderSummary() string {
-	chips := []string{
-		statChipStyle.Render(fmt.Sprintf("All %d", m.stats.All)),
-		renderQuadrantStat(store.QuadrantOne, m.stats.QuadrantOne),
-		renderQuadrantStat(store.QuadrantTwo, m.stats.QuadrantTwo),
-		renderQuadrantStat(store.QuadrantThree, m.stats.QuadrantThree),
-		renderQuadrantStat(store.QuadrantFour, m.stats.QuadrantFour),
-	}
-
-	if m.search != "" {
-		chips = append(chips, searchChipStyle.Render(fmt.Sprintf("Search %q", truncate(m.search, 24))))
-	}
-
-	return lipgloss.JoinHorizontal(lipgloss.Left, chips...)
 }
 
 func (m model) renderBoard() string {
@@ -363,29 +340,13 @@ func (m model) renderBoard() string {
 
 func (m model) renderQuadrantPanel(quadrant store.Quadrant, width, height int) string {
 	todos := m.board[quadrant]
-	header := lipgloss.JoinHorizontal(
-		lipgloss.Left,
-		quadrantTitleStyle(quadrant).Render(quadrant.ShortLabel()),
-		" ",
-		quadrantCountStyle(quadrant, false).Render(fmt.Sprintf("%d", len(todos))),
-	)
-
-	if quadrant == m.focus {
-		header = lipgloss.JoinHorizontal(
-			lipgloss.Left,
-			header,
-			" ",
-			quadrantCountStyle(quadrant, true).Render("FOCUS"),
-		)
-	}
-
-	desc := quadrantDescStyle(quadrant).Render(quadrant.ActionLabel())
-
+	header := lipgloss.NewStyle().Bold(true).Render(quadrant.ShortLabel())
+	desc := metaStyle.Render(quadrant.ActionLabel())
 	lines := []string{header, desc}
-	itemSlots := max(1, height-5)
+	itemSlots := max(1, height-4)
 
 	if len(todos) == 0 {
-		lines = append(lines, emptyStateStyle.Render("No tasks"))
+		lines = append(lines, metaStyle.Render("No tasks"))
 	} else {
 		start, visible := visibleTodos(todos, m.cursors[quadrant], itemSlots)
 		if start > 0 {
@@ -394,7 +355,7 @@ func (m model) renderQuadrantPanel(quadrant store.Quadrant, width, height int) s
 
 		for i, todo := range visible {
 			actualIndex := start + i
-			line := renderTodoLine(todo, quadrant, quadrant == m.focus && actualIndex == m.cursors[quadrant], width-6)
+			line := renderTodoLine(todo, quadrant == m.focus && actualIndex == m.cursors[quadrant], width-6)
 			lines = append(lines, line)
 		}
 
@@ -410,7 +371,7 @@ func (m model) renderQuadrantPanel(quadrant store.Quadrant, width, height int) s
 		Render(content)
 }
 
-func renderTodoLine(todo store.Todo, quadrant store.Quadrant, selected bool, width int) string {
+func renderTodoLine(todo store.Todo, selected bool, width int) string {
 	cursor := " "
 	if selected {
 		cursor = "▸"
@@ -422,28 +383,14 @@ func renderTodoLine(todo store.Todo, quadrant store.Quadrant, selected bool, wid
 	}
 
 	label := truncate(todo.Title, max(12, width-10))
-	line := fmt.Sprintf("%s [%s] %s", cursor, check, label)
-	meta := taskMetaStyle.Render(fmt.Sprintf("#%d", todo.ID))
-	body := lipgloss.JoinVertical(lipgloss.Left, line, meta)
-
+	line := fmt.Sprintf("%s [%s] #%d %s", cursor, check, todo.ID, label)
 	if todo.Done {
-		body = lipgloss.JoinVertical(
-			lipgloss.Left,
-			doneStyle.Render(line),
-			taskMetaStyle.Render(fmt.Sprintf("#%d done", todo.ID)),
-		)
+		line = doneStyle.Render(line)
 	}
 	if selected {
-		body = selectedTaskStyle(quadrant).
-			Width(max(12, width)).
-			Padding(0, 1).
-			Render(body)
-		return body
+		line = selectedStyle.Width(max(12, width)).Render(line)
 	}
-	return lipgloss.NewStyle().
-		Width(max(12, width)).
-		Padding(0, 1).
-		Render(body)
+	return line
 }
 
 func (m model) currentTodo() (store.Todo, bool) {
@@ -476,16 +423,22 @@ func quadrantPanelStyle(quadrant store.Quadrant, focused bool) lipgloss.Style {
 		Border(lipgloss.RoundedBorder()).
 		Padding(0, 1)
 
-	color := quadrantColor(quadrant)
+	color := lipgloss.Color("#C2A878")
+	switch quadrant {
+	case store.QuadrantOne:
+		color = lipgloss.Color("#B42318")
+	case store.QuadrantTwo:
+		color = lipgloss.Color("#1D4ED8")
+	case store.QuadrantThree:
+		color = lipgloss.Color("#B45309")
+	case store.QuadrantFour:
+		color = lipgloss.Color("#475569")
+	}
 
 	if focused {
-		return style.
-			BorderForeground(color).
-			Background(quadrantPanelBackground(quadrant, true))
+		return style.BorderForeground(color)
 	}
-	return style.
-		BorderForeground(lipgloss.Color("#D1D5DB")).
-		Background(quadrantPanelBackground(quadrant, false))
+	return style.BorderForeground(lipgloss.Color("#CFCFCF"))
 }
 
 func nextQuadrant(current store.Quadrant) store.Quadrant {
@@ -533,96 +486,12 @@ func renderQuadrantPicker(current store.Quadrant) string {
 	parts := make([]string, 0, 4)
 	for _, quadrant := range store.AllQuadrants() {
 		if quadrant == current {
-			parts = append(parts, quadrantTitleStyle(quadrant).Render(quadrant.ShortLabel()))
+			parts = append(parts, quadrantPanelStyle(quadrant, true).Padding(0, 1).Render(quadrant.ShortLabel()))
 			continue
 		}
 		parts = append(parts, idleBadgeStyle.Render(quadrant.ShortLabel()))
 	}
 	return lipgloss.JoinHorizontal(lipgloss.Left, parts...)
-}
-
-func renderQuadrantStat(quadrant store.Quadrant, count int) string {
-	return quadrantCountStyle(quadrant, false).Render(fmt.Sprintf("%s %d", quadrant.ShortLabel(), count))
-}
-
-func quadrantColor(quadrant store.Quadrant) lipgloss.Color {
-	switch quadrant {
-	case store.QuadrantOne:
-		return lipgloss.Color("#B42318")
-	case store.QuadrantTwo:
-		return lipgloss.Color("#1D4ED8")
-	case store.QuadrantThree:
-		return lipgloss.Color("#B45309")
-	case store.QuadrantFour:
-		return lipgloss.Color("#475569")
-	default:
-		return lipgloss.Color("#64748B")
-	}
-}
-
-func quadrantPanelBackground(quadrant store.Quadrant, focused bool) lipgloss.Color {
-	if focused {
-		switch quadrant {
-		case store.QuadrantOne:
-			return lipgloss.Color("#FFF1F2")
-		case store.QuadrantTwo:
-			return lipgloss.Color("#EFF6FF")
-		case store.QuadrantThree:
-			return lipgloss.Color("#FFFBEB")
-		case store.QuadrantFour:
-			return lipgloss.Color("#F8FAFC")
-		}
-	}
-
-	switch quadrant {
-	case store.QuadrantOne:
-		return lipgloss.Color("#FFFBFB")
-	case store.QuadrantTwo:
-		return lipgloss.Color("#FAFCFF")
-	case store.QuadrantThree:
-		return lipgloss.Color("#FFFDF7")
-	case store.QuadrantFour:
-		return lipgloss.Color("#FCFCFD")
-	default:
-		return lipgloss.Color("#FFFFFF")
-	}
-}
-
-func quadrantTitleStyle(quadrant store.Quadrant) lipgloss.Style {
-	return lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("#F8FAFC")).
-		Background(quadrantColor(quadrant)).
-		Padding(0, 1)
-}
-
-func quadrantCountStyle(quadrant store.Quadrant, focused bool) lipgloss.Style {
-	style := lipgloss.NewStyle().
-		Foreground(quadrantColor(quadrant)).
-		Background(quadrantPanelBackground(quadrant, false)).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(quadrantColor(quadrant)).
-		Padding(0, 1)
-
-	if focused {
-		return style.
-			Foreground(lipgloss.Color("#F8FAFC")).
-			Background(quadrantColor(quadrant))
-	}
-	return style
-}
-
-func quadrantDescStyle(quadrant store.Quadrant) lipgloss.Style {
-	return lipgloss.NewStyle().
-		Foreground(quadrantColor(quadrant))
-}
-
-func selectedTaskStyle(quadrant store.Quadrant) lipgloss.Style {
-	return lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#0F172A")).
-		Background(quadrantPanelBackground(quadrant, true)).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(quadrantColor(quadrant))
 }
 
 func visibleTodos(todos []store.Todo, cursor, slots int) (int, []store.Todo) {
