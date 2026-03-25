@@ -35,21 +35,22 @@ type operationDoneMsg struct {
 }
 
 type model struct {
-	store       *store.Store
-	dbPath      string
-	width       int
-	height      int
-	todos       []store.Todo
-	board       map[store.Quadrant][]store.Todo
-	stats       store.Stats
-	focus       store.Quadrant
-	cursors     map[store.Quadrant]int
-	mode        inputMode
-	input       textinput.Model
-	addQuadrant store.Quadrant
-	search      string
-	status      string
-	lastErr     error
+	store           *store.Store
+	dbPath          string
+	width           int
+	height          int
+	todos           []store.Todo
+	board           map[store.Quadrant][]store.Todo
+	stats           store.Stats
+	focus           store.Quadrant
+	cursors         map[store.Quadrant]int
+	mode            inputMode
+	input           textinput.Model
+	addQuadrant     store.Quadrant
+	search          string
+	pendingDeleteID int64
+	status          string
+	lastErr         error
 }
 
 var (
@@ -118,6 +119,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.stats = msg.stats
 		m.board = partitionTodos(m.todos)
 		m.clampCursors()
+		m.pendingDeleteID = 0
 		return m, nil
 
 	case operationDoneMsg:
@@ -149,20 +151,26 @@ func (m model) updateBoardMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c", "q":
 		return m, tea.Quit
 	case "up", "k":
+		m.pendingDeleteID = 0
 		if m.cursors[m.focus] > 0 {
 			m.cursors[m.focus]--
 		}
 	case "down", "j":
+		m.pendingDeleteID = 0
 		if m.cursors[m.focus] < len(m.board[m.focus])-1 {
 			m.cursors[m.focus]++
 		}
 	case "left", "h":
+		m.pendingDeleteID = 0
 		m.focus = previousQuadrant(m.focus)
 	case "right", "l", "tab":
+		m.pendingDeleteID = 0
 		m.focus = nextQuadrant(m.focus)
 	case "shift+tab":
+		m.pendingDeleteID = 0
 		m.focus = previousQuadrant(m.focus)
 	case "a", "n":
+		m.pendingDeleteID = 0
 		m.mode = modeAdd
 		m.input.SetValue("")
 		m.input.Placeholder = "Write a task and press Enter"
@@ -170,40 +178,56 @@ func (m model) updateBoardMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.addQuadrant = m.focus
 		m.status = "Add a new task"
 	case "/":
+		m.pendingDeleteID = 0
 		m.mode = modeSearch
 		m.input.SetValue(m.search)
 		m.input.Placeholder = "Search tasks"
 		m.input.Focus()
 		m.status = "Search and press Enter"
 	case "r":
+		m.pendingDeleteID = 0
 		m.status = "Reloaded"
 		return m, loadTodosCmd(m.store, m.search)
 	case "esc":
+		m.pendingDeleteID = 0
 		if m.search != "" {
 			m.search = ""
 			m.status = "Search cleared"
 			return m, loadTodosCmd(m.store, m.search)
 		}
 	case "enter", " ":
+		m.pendingDeleteID = 0
 		if todo, ok := m.currentTodo(); ok {
 			return m, toggleTodoCmd(m.store, todo.ID)
 		}
 	case "d", "x", "backspace", "delete":
 		if todo, ok := m.currentTodo(); ok {
-			return m, deleteTodoCmd(m.store, todo.ID, todo.Title)
+			if m.pendingDeleteID == todo.ID {
+				m.pendingDeleteID = 0
+				return m, deleteTodoCmd(m.store, todo.ID, todo.Title)
+			}
+			m.pendingDeleteID = todo.ID
+			m.status = fmt.Sprintf("Press delete again to remove %q", truncate(todo.Title, 28))
+			m.lastErr = nil
+			return m, nil
 		}
+		m.pendingDeleteID = 0
 	case "1", "2", "3", "4":
+		m.pendingDeleteID = 0
 		target := parseQuadrantKey(msg.String())
 		if todo, ok := m.currentTodo(); ok {
 			m.focus = target
 			return m, setQuadrantCmd(m.store, todo.ID, target)
 		}
+	default:
+		m.pendingDeleteID = 0
 	}
 
 	return m, nil
 }
 
 func (m model) updateAddMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.pendingDeleteID = 0
 	switch msg.String() {
 	case "ctrl+c":
 		return m, tea.Quit
@@ -243,6 +267,7 @@ func (m model) updateAddMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) updateSearchMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.pendingDeleteID = 0
 	switch msg.String() {
 	case "ctrl+c":
 		return m, tea.Quit
