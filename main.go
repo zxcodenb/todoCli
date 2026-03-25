@@ -302,13 +302,13 @@ func (m model) View() string {
 		lipgloss.Left,
 		metaStyle.Render(fmt.Sprintf("All %d", m.stats.All)),
 		"   ",
-		renderSummaryStat(store.QuadrantOne, m.stats.QuadrantOne),
+		renderSummaryStat(store.QuadrantOne, m.stats.QuadrantOne, m.focus == store.QuadrantOne),
 		"   ",
-		renderSummaryStat(store.QuadrantTwo, m.stats.QuadrantTwo),
+		renderSummaryStat(store.QuadrantTwo, m.stats.QuadrantTwo, m.focus == store.QuadrantTwo),
 		"   ",
-		renderSummaryStat(store.QuadrantThree, m.stats.QuadrantThree),
+		renderSummaryStat(store.QuadrantThree, m.stats.QuadrantThree, m.focus == store.QuadrantThree),
 		"   ",
-		renderSummaryStat(store.QuadrantFour, m.stats.QuadrantFour),
+		renderSummaryStat(store.QuadrantFour, m.stats.QuadrantFour, m.focus == store.QuadrantFour),
 	)
 
 	help := metaStyle.Render("h/l switch quadrant  j/k move  1-4 move task  a add  / search  enter toggle  d delete  esc clear search  q quit")
@@ -366,12 +366,34 @@ func (m model) renderBoard() string {
 
 func (m model) renderQuadrantPanel(quadrant store.Quadrant, width, height int) string {
 	todos := m.board[quadrant]
-	header := lipgloss.JoinHorizontal(
+	focused := quadrant == m.focus
+	headerLeft := lipgloss.JoinHorizontal(
 		lipgloss.Left,
-		quadrantTitleStyle(quadrant).Render(quadrant.ShortLabel()),
+		quadrantTitleStyle(quadrant, focused).Render(quadrant.ShortLabel()),
 		" ",
-		quadrantCountStyle(quadrant).Render(fmt.Sprintf("%d", len(todos))),
+		quadrantCountStyle(quadrant, focused).Render(fmt.Sprintf("%d", len(todos))),
 	)
+	if focused {
+		headerLeft = lipgloss.JoinHorizontal(
+			lipgloss.Left,
+			headerLeft,
+			" ",
+			quadrantFocusBadgeStyle(quadrant).Render("CURRENT"),
+		)
+	}
+
+	header := headerLeft
+	if focused {
+		header = lipgloss.JoinHorizontal(
+			lipgloss.Top,
+			headerLeft,
+			lipgloss.NewStyle().
+				Width(max(0, width-lipgloss.Width(headerLeft)-lipgloss.Width(cuteFocusSymbol(quadrant))-6)).
+				Render(""),
+			quadrantSymbolStyle(quadrant).Render(cuteFocusSymbol(quadrant)),
+		)
+	}
+
 	lines := []string{header}
 	itemSlots := max(1, height-3)
 
@@ -395,7 +417,7 @@ func (m model) renderQuadrantPanel(quadrant store.Quadrant, width, height int) s
 	}
 
 	content := strings.Join(lines, "\n")
-	return quadrantPanelStyle(quadrant, quadrant == m.focus).
+	return quadrantPanelStyle(quadrant, focused).
 		Width(width).
 		Height(height).
 		Render(content)
@@ -455,15 +477,18 @@ func (m model) clampCursors() {
 
 func quadrantPanelStyle(quadrant store.Quadrant, focused bool) lipgloss.Style {
 	style := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
 		Padding(0, 1)
 
 	color := quadrantMutedColor(quadrant)
 
 	if focused {
-		return style.BorderForeground(quadrantColor(quadrant))
+		return style.
+			Border(lipgloss.ThickBorder()).
+			BorderForeground(quadrantColor(quadrant))
 	}
-	return style.BorderForeground(color)
+	return style.
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(color)
 }
 
 func nextQuadrant(current store.Quadrant) store.Quadrant {
@@ -511,7 +536,7 @@ func renderQuadrantPicker(current store.Quadrant) string {
 	parts := make([]string, 0, 4)
 	for _, quadrant := range store.AllQuadrants() {
 		if quadrant == current {
-			parts = append(parts, quadrantTitleStyle(quadrant).Render(quadrant.ShortLabel()))
+			parts = append(parts, quadrantTitleStyle(quadrant, true).Render(quadrant.ShortLabel()))
 			continue
 		}
 		parts = append(parts, quadrantMetaStyle(quadrant).Render(quadrant.ShortLabel()))
@@ -519,8 +544,12 @@ func renderQuadrantPicker(current store.Quadrant) string {
 	return lipgloss.JoinHorizontal(lipgloss.Left, parts...)
 }
 
-func renderSummaryStat(quadrant store.Quadrant, count int) string {
-	return quadrantMetaStyle(quadrant).Render(fmt.Sprintf("%s %d", quadrant.ShortLabel(), count))
+func renderSummaryStat(quadrant store.Quadrant, count int, focused bool) string {
+	label := fmt.Sprintf("%s %d", quadrant.ShortLabel(), count)
+	if focused {
+		label = ">> " + label
+	}
+	return quadrantSummaryStyle(quadrant, focused).Render(label)
 }
 
 func quadrantColor(quadrant store.Quadrant) lipgloss.Color {
@@ -553,16 +582,47 @@ func quadrantMutedColor(quadrant store.Quadrant) lipgloss.Color {
 	}
 }
 
-func quadrantTitleStyle(quadrant store.Quadrant) lipgloss.Style {
-	return quadrantTitleBaseStyle.Foreground(quadrantColor(quadrant))
+func quadrantTitleStyle(quadrant store.Quadrant, focused bool) lipgloss.Style {
+	style := quadrantTitleBaseStyle.Foreground(quadrantColor(quadrant))
+	if focused {
+		return style.Underline(true)
+	}
+	return style
 }
 
 func quadrantMetaStyle(quadrant store.Quadrant) lipgloss.Style {
 	return metaStyle.Foreground(quadrantColor(quadrant))
 }
 
-func quadrantCountStyle(quadrant store.Quadrant) lipgloss.Style {
+func quadrantCountStyle(quadrant store.Quadrant, focused bool) lipgloss.Style {
+	style := highlightedMetaStyle.Foreground(quadrantColor(quadrant))
+	if focused {
+		return style.Underline(true)
+	}
+	return style
+}
+
+func quadrantSummaryStyle(quadrant store.Quadrant, focused bool) lipgloss.Style {
+	style := quadrantMetaStyle(quadrant)
+	if focused {
+		return style.Bold(true).Underline(true)
+	}
+	return style
+}
+
+func quadrantFocusBadgeStyle(quadrant store.Quadrant) lipgloss.Style {
 	return highlightedMetaStyle.Foreground(quadrantColor(quadrant))
+}
+
+func quadrantSymbolStyle(quadrant store.Quadrant) lipgloss.Style {
+	return lipgloss.NewStyle().
+		Bold(true).
+		Blink(true).
+		Foreground(quadrantColor(quadrant))
+}
+
+func cuteFocusSymbol(quadrant store.Quadrant) string {
+	return "◉"
 }
 
 func visibleTodos(todos []store.Todo, cursor, slots int) (int, []store.Todo) {
