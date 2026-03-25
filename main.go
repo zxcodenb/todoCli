@@ -61,6 +61,8 @@ var (
 			Foreground(lipgloss.Color("#FFF8E7")).
 			Background(lipgloss.Color("#D94841")).
 			Padding(0, 1)
+	quadrantTitleBaseStyle = lipgloss.NewStyle().
+				Bold(true)
 	metaStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#5F5F5F"))
 	statusStyle = lipgloss.NewStyle().
@@ -69,15 +71,14 @@ var (
 	errorStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#A61B1B")).
 			Bold(true)
-	selectedStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#FFFAF0")).
-			Background(lipgloss.Color("#0F766E"))
 	doneStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#7A7A7A")).
 			Strikethrough(true)
 	idleBadgeStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#4B5563")).
 			Padding(0, 1)
+	highlightedMetaStyle = lipgloss.NewStyle().
+				Bold(true)
 )
 
 func initialModel(todoStore *store.Store, dbPath string) model {
@@ -151,26 +152,26 @@ func (m model) updateBoardMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c", "q":
 		return m, tea.Quit
 	case "up", "k":
-		m.pendingDeleteID = 0
+		m.clearDeletePrompt()
 		if m.cursors[m.focus] > 0 {
 			m.cursors[m.focus]--
 		}
 	case "down", "j":
-		m.pendingDeleteID = 0
+		m.clearDeletePrompt()
 		if m.cursors[m.focus] < len(m.board[m.focus])-1 {
 			m.cursors[m.focus]++
 		}
 	case "left", "h":
-		m.pendingDeleteID = 0
+		m.clearDeletePrompt()
 		m.focus = previousQuadrant(m.focus)
 	case "right", "l", "tab":
-		m.pendingDeleteID = 0
+		m.clearDeletePrompt()
 		m.focus = nextQuadrant(m.focus)
 	case "shift+tab":
-		m.pendingDeleteID = 0
+		m.clearDeletePrompt()
 		m.focus = previousQuadrant(m.focus)
 	case "a", "n":
-		m.pendingDeleteID = 0
+		m.clearDeletePrompt()
 		m.mode = modeAdd
 		m.input.SetValue("")
 		m.input.Placeholder = "Write a task and press Enter"
@@ -178,32 +179,32 @@ func (m model) updateBoardMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.addQuadrant = m.focus
 		m.status = "Add a new task"
 	case "/":
-		m.pendingDeleteID = 0
+		m.clearDeletePrompt()
 		m.mode = modeSearch
 		m.input.SetValue(m.search)
 		m.input.Placeholder = "Search tasks"
 		m.input.Focus()
 		m.status = "Search and press Enter"
 	case "r":
-		m.pendingDeleteID = 0
+		m.clearDeletePrompt()
 		m.status = "Reloaded"
 		return m, loadTodosCmd(m.store, m.search)
 	case "esc":
-		m.pendingDeleteID = 0
+		m.clearDeletePrompt()
 		if m.search != "" {
 			m.search = ""
 			m.status = "Search cleared"
 			return m, loadTodosCmd(m.store, m.search)
 		}
 	case "enter", " ":
-		m.pendingDeleteID = 0
+		m.clearDeletePrompt()
 		if todo, ok := m.currentTodo(); ok {
 			return m, toggleTodoCmd(m.store, todo.ID)
 		}
 	case "d", "x", "backspace", "delete":
 		if todo, ok := m.currentTodo(); ok {
 			if m.pendingDeleteID == todo.ID {
-				m.pendingDeleteID = 0
+				m.clearDeletePrompt()
 				return m, deleteTodoCmd(m.store, todo.ID, todo.Title)
 			}
 			m.pendingDeleteID = todo.ID
@@ -211,16 +212,16 @@ func (m model) updateBoardMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.lastErr = nil
 			return m, nil
 		}
-		m.pendingDeleteID = 0
+		m.clearDeletePrompt()
 	case "1", "2", "3", "4":
-		m.pendingDeleteID = 0
+		m.clearDeletePrompt()
 		target := parseQuadrantKey(msg.String())
 		if todo, ok := m.currentTodo(); ok {
 			m.focus = target
 			return m, setQuadrantCmd(m.store, todo.ID, target)
 		}
 	default:
-		m.pendingDeleteID = 0
+		m.clearDeletePrompt()
 	}
 
 	return m, nil
@@ -301,13 +302,13 @@ func (m model) View() string {
 		lipgloss.Left,
 		metaStyle.Render(fmt.Sprintf("All %d", m.stats.All)),
 		"   ",
-		metaStyle.Render(fmt.Sprintf("Q1 %d", m.stats.QuadrantOne)),
+		renderSummaryStat(store.QuadrantOne, m.stats.QuadrantOne),
 		"   ",
-		metaStyle.Render(fmt.Sprintf("Q2 %d", m.stats.QuadrantTwo)),
+		renderSummaryStat(store.QuadrantTwo, m.stats.QuadrantTwo),
 		"   ",
-		metaStyle.Render(fmt.Sprintf("Q3 %d", m.stats.QuadrantThree)),
+		renderSummaryStat(store.QuadrantThree, m.stats.QuadrantThree),
 		"   ",
-		metaStyle.Render(fmt.Sprintf("Q4 %d", m.stats.QuadrantFour)),
+		renderSummaryStat(store.QuadrantFour, m.stats.QuadrantFour),
 	)
 
 	help := metaStyle.Render("h/l switch quadrant  j/k move  1-4 move task  a add  / search  enter toggle  d delete  esc clear search  q quit")
@@ -365,27 +366,31 @@ func (m model) renderBoard() string {
 
 func (m model) renderQuadrantPanel(quadrant store.Quadrant, width, height int) string {
 	todos := m.board[quadrant]
-	header := lipgloss.NewStyle().Bold(true).Render(quadrant.ShortLabel())
-	desc := metaStyle.Render(quadrant.ActionLabel())
-	lines := []string{header, desc}
-	itemSlots := max(1, height-4)
+	header := lipgloss.JoinHorizontal(
+		lipgloss.Left,
+		quadrantTitleStyle(quadrant).Render(quadrant.ShortLabel()),
+		" ",
+		quadrantCountStyle(quadrant).Render(fmt.Sprintf("%d", len(todos))),
+	)
+	lines := []string{header}
+	itemSlots := max(1, height-3)
 
 	if len(todos) == 0 {
-		lines = append(lines, metaStyle.Render("No tasks"))
+		lines = append(lines, quadrantMetaStyle(quadrant).Render("No tasks"))
 	} else {
 		start, visible := visibleTodos(todos, m.cursors[quadrant], itemSlots)
 		if start > 0 {
-			lines = append(lines, metaStyle.Render("..."))
+			lines = append(lines, quadrantMetaStyle(quadrant).Render("..."))
 		}
 
 		for i, todo := range visible {
 			actualIndex := start + i
-			line := renderTodoLine(todo, quadrant == m.focus && actualIndex == m.cursors[quadrant], width-6)
+			line := renderTodoLine(todo, quadrant, quadrant == m.focus && actualIndex == m.cursors[quadrant], width-6)
 			lines = append(lines, line)
 		}
 
 		if start+len(visible) < len(todos) {
-			lines = append(lines, metaStyle.Render("..."))
+			lines = append(lines, quadrantMetaStyle(quadrant).Render("..."))
 		}
 	}
 
@@ -396,7 +401,7 @@ func (m model) renderQuadrantPanel(quadrant store.Quadrant, width, height int) s
 		Render(content)
 }
 
-func renderTodoLine(todo store.Todo, selected bool, width int) string {
+func renderTodoLine(todo store.Todo, quadrant store.Quadrant, selected bool, width int) string {
 	cursor := " "
 	if selected {
 		cursor = "▸"
@@ -412,9 +417,6 @@ func renderTodoLine(todo store.Todo, selected bool, width int) string {
 	if todo.Done {
 		line = doneStyle.Render(line)
 	}
-	if selected {
-		line = selectedStyle.Width(max(12, width)).Render(line)
-	}
 	return line
 }
 
@@ -425,6 +427,14 @@ func (m model) currentTodo() (store.Todo, bool) {
 		return store.Todo{}, false
 	}
 	return todos[cursor], true
+}
+
+func (m *model) clearDeletePrompt() {
+	if m.pendingDeleteID != 0 {
+		m.pendingDeleteID = 0
+		m.status = "Delete cancelled"
+		m.lastErr = nil
+	}
 }
 
 func (m model) clampCursors() {
@@ -448,22 +458,12 @@ func quadrantPanelStyle(quadrant store.Quadrant, focused bool) lipgloss.Style {
 		Border(lipgloss.RoundedBorder()).
 		Padding(0, 1)
 
-	color := lipgloss.Color("#C2A878")
-	switch quadrant {
-	case store.QuadrantOne:
-		color = lipgloss.Color("#B42318")
-	case store.QuadrantTwo:
-		color = lipgloss.Color("#1D4ED8")
-	case store.QuadrantThree:
-		color = lipgloss.Color("#B45309")
-	case store.QuadrantFour:
-		color = lipgloss.Color("#475569")
-	}
+	color := quadrantMutedColor(quadrant)
 
 	if focused {
-		return style.BorderForeground(color)
+		return style.BorderForeground(quadrantColor(quadrant))
 	}
-	return style.BorderForeground(lipgloss.Color("#CFCFCF"))
+	return style.BorderForeground(color)
 }
 
 func nextQuadrant(current store.Quadrant) store.Quadrant {
@@ -511,12 +511,58 @@ func renderQuadrantPicker(current store.Quadrant) string {
 	parts := make([]string, 0, 4)
 	for _, quadrant := range store.AllQuadrants() {
 		if quadrant == current {
-			parts = append(parts, quadrantPanelStyle(quadrant, true).Padding(0, 1).Render(quadrant.ShortLabel()))
+			parts = append(parts, quadrantTitleStyle(quadrant).Render(quadrant.ShortLabel()))
 			continue
 		}
-		parts = append(parts, idleBadgeStyle.Render(quadrant.ShortLabel()))
+		parts = append(parts, quadrantMetaStyle(quadrant).Render(quadrant.ShortLabel()))
 	}
 	return lipgloss.JoinHorizontal(lipgloss.Left, parts...)
+}
+
+func renderSummaryStat(quadrant store.Quadrant, count int) string {
+	return quadrantMetaStyle(quadrant).Render(fmt.Sprintf("%s %d", quadrant.ShortLabel(), count))
+}
+
+func quadrantColor(quadrant store.Quadrant) lipgloss.Color {
+	switch quadrant {
+	case store.QuadrantOne:
+		return lipgloss.Color("#C2410C")
+	case store.QuadrantTwo:
+		return lipgloss.Color("#1D4ED8")
+	case store.QuadrantThree:
+		return lipgloss.Color("#A16207")
+	case store.QuadrantFour:
+		return lipgloss.Color("#4B5563")
+	default:
+		return lipgloss.Color("#4B5563")
+	}
+}
+
+func quadrantMutedColor(quadrant store.Quadrant) lipgloss.Color {
+	switch quadrant {
+	case store.QuadrantOne:
+		return lipgloss.Color("#EAAC8B")
+	case store.QuadrantTwo:
+		return lipgloss.Color("#93C5FD")
+	case store.QuadrantThree:
+		return lipgloss.Color("#FCD34D")
+	case store.QuadrantFour:
+		return lipgloss.Color("#9CA3AF")
+	default:
+		return lipgloss.Color("#9CA3AF")
+	}
+}
+
+func quadrantTitleStyle(quadrant store.Quadrant) lipgloss.Style {
+	return quadrantTitleBaseStyle.Foreground(quadrantColor(quadrant))
+}
+
+func quadrantMetaStyle(quadrant store.Quadrant) lipgloss.Style {
+	return metaStyle.Foreground(quadrantColor(quadrant))
+}
+
+func quadrantCountStyle(quadrant store.Quadrant) lipgloss.Style {
+	return highlightedMetaStyle.Foreground(quadrantColor(quadrant))
 }
 
 func visibleTodos(todos []store.Todo, cursor, slots int) (int, []store.Todo) {
